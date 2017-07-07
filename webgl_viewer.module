@@ -1,0 +1,394 @@
+<?php
+
+/**
+ * @file
+ * This module integrates the WebGL Viewer JQuery library from:
+ */
+
+
+/**
+ * Get all WebGL Viewer settings info.
+ */
+function webgl_viewer_settings_info() {
+  $settings = array(
+     'Show title' => array(
+       'title' => t('Show title'),
+       'id' =>'showTitle' ,
+       'description' => t('Shows the title tag of the image. True or false.'),
+       'default_value' => TRUE,
+       'form_type' => 'checkbox',
+       'fieldset' => 'zoom_style_fieldset',
+     ),
+   );
+
+  return $settings;
+}
+
+
+
+/**
+ * Implements hook_field_formatter()
+ */
+function webgl_viewer_field_formatter_info() {
+  
+  $formatters = array();
+
+  $webgl_viewer_settings = webgl_viewer_settings_info('default_value');
+  $default_settings = array();
+  // Return a single depth array with the given key as value.
+  foreach ($webgl_viewer_settings as $key => $setting) {
+    if (isset($setting['fieldset'])) {
+      $default_settings[$setting['fieldset']][$key] = $setting['default_value'];
+    }
+    else {
+      $default_settings[$key] = $setting['default_value'];
+    }
+  }
+
+  $formatters['webgl_viewer'] = array(
+    'label' => t('Web Viewer'),
+    'field types' => array('image', 'file'),
+    'settings' => $default_settings,
+  );
+
+  return $formatters;
+}
+
+
+/**
+ * Implements hook_field_formatter_settings_form().
+ */
+function webgl_viewer_field_formatter_settings_form($field, $instance, $view_mode) {
+  $display = $instance['display'][$view_mode];
+  $settings = $display['settings'];
+
+  $form = array();
+
+  // Get a list of all style names for our form options.
+  $options = array(t('None (original image)'),);
+  foreach (image_styles() as $id => $style) {
+     $options[$id] = $id;
+  }
+
+  $webgl_viewer_settings = webgl_viewer_settings_info();
+
+  foreach ($webgl_viewer_settings as $key => $form_element) {
+    if ($form_element['form_type'] == 'fieldset') {
+      $form[$key] = array(
+        '#type' => $form_element['form_type'],
+        '#title' => $form_element['title'],
+        '#description' => $form_element['description'],
+        '#collapsible' => TRUE,
+        '#collapsed' => TRUE,
+      );
+    }
+    else {
+      $default_value = empty($form_element['fieldset']) ? $settings[$key] : $settings[$form_element['fieldset']][$key];
+      $form_settings = array(
+        '#type' => $form_element['form_type'],
+        '#title' => $form_element['title'],
+        '#default_value' => $default_value,
+        '#description' => $form_element['description'],
+      );
+      // Get the right option for select list.
+      if ($form_element['form_type'] == 'select') {
+        if (isset($form_element['options'])) {
+           $form_settings['#options'] = $form_element['options'];
+        }
+        else {
+           $form_settings['#options'] =  $options;
+        }
+      }
+      // Add element to fieldset or to main form.
+      if (!empty($form_element['fieldset'])) {
+        $form[$form_element['fieldset']][$key] = $form_settings;
+      }
+      else {
+        $form[$key] = $form_settings;
+      }
+    }
+  }
+  $form = array();
+  return $form;
+}
+
+/**
+ * Implements hook_field_formatter_settings_summary().
+ */
+function webgl_viewer_field_formatter_settings_summary($field, $instance, $view_mode) {
+  $display = $instance['display'][$view_mode];
+  $settings = $display['settings'];
+
+  $webgl_viewer_settings = webgl_viewer_settings_info();
+  $summary = array();
+  foreach ($webgl_viewer_settings as $key => $info) {
+    $summary_info = !empty($info['fieldset']) ? $settings[$info['fieldset']][$key] : $settings[$key];
+    $summary_info = $info['form_type'] == 'fieldset' ? '' : $summary_info;
+    $title = ($info['form_type'] == 'fieldset') ?  '<strong>' . $info['title'] . '</strong>' : $info['title'] . ' : ';
+    $summary[] = $title .  $summary_info;
+  }
+   $summary = array();
+  return implode ('<br />', $summary);
+}
+
+
+
+/**
+ * Implements hook_field_formatter_view().
+ */
+function webgl_viewer_field_formatter_view($entity_type, $entity, $field, $instance, $langcode, $items, $display) {
+  $element = array();
+  $settings = $display['settings'];
+
+  $webgl_viewer_settings = webgl_viewer_settings_info();
+  $variables = array();
+  foreach ($webgl_viewer_settings as $key => $info) {
+    $variables['#' . $key] = !empty($info['fieldset']) ? $settings[$info['fieldset']][$key] : $settings[$key];
+  }
+
+  // Build elements for each item.
+  foreach ($items as $delta => $item) {
+    $element[$delta] = array(
+      '#theme' => 'webgl_viewer_image',
+      '#item' => $item,
+    );
+    $element[$delta] += $variables;
+  }
+  return $element;
+}
+
+
+/**
+ * Implementation of hook_theme().
+ */
+function webgl_viewer_theme() {
+  $theme_info = array(
+    'webgl_viewer_image' => array(
+      'variables' => array(
+        'item' => NULL,
+      ),
+    ),
+    'webgl_viewer_image_gallery' => array(
+      'variables' => array(
+        'items' => 0,
+      ),
+    ),
+  );
+
+  // Pass default settings values.
+  $webgl_viewer_settings = webgl_viewer_settings_info('default_value');
+  $theme_info['webgl_viewer_image']['variables'] +=  $webgl_viewer_settings;
+  $theme_info['webgl_viewer_image_gallery']['variables'] +=  $webgl_viewer_settings;
+
+  return $theme_info;
+}
+
+
+
+/**
+ * Theme handler for the webgl_viewer (no gallery)
+ */
+function theme_webgl_viewer_image($variables) {
+  global $base_url;
+  $item = $variables['item'];
+
+  //Build image attributes
+  $attributes['src'] = file_create_url($item['uri']);
+  foreach (array('width', 'height', 'alt', 'title') as $key) {
+    if (isset($variables[$key])) {
+      $attributes[$key] = $variables[$key];
+    }
+  }
+
+  $current_fid = '';
+
+  error_reporting(E_ALL);
+
+
+
+  $url = file_create_url($item['uri']);
+  $file_name = '';
+
+  if (isset($item['filename'])) {
+    $file_name = $item['filename'];
+  }
+  
+  $current_fid = $item['fid'];
+
+  $directory_path = str_replace($file_name, '', $url);
+
+  $files_path = variable_get('file_public_path', conf_path() . '/files') .  "/coin_rti/rti_" . $current_fid;
+  $files_path1 = drupal_realpath('public://coin_rti') . "/rti_" . $current_fid;
+
+  
+  $module_path = drupal_get_path('module', 'webgl_viewer');
+  $folderPath = $directory_path . "rti_" . $current_fid;
+
+  drupal_add_js(
+    'createRtiViewer("viewerCont", "'. $base_url . "/" . $files_path .'", 700, 600);',
+    array(
+      'type' => 'inline',
+      'scope' => 'footer',
+      'group' => JS_THEME,
+      'weight' => 5,
+    )
+  );
+  //Return image process
+  //return '<img' . drupal_attributes($attributes) . ' />';
+  return '<div id="viewerCont"></div>';
+}
+
+
+/**
+* Get the true path to the root of the Drupal site.
+* Better than using DOCUMENT_ROOT and base_path().
+*/
+function absolute_path_to_drupal() {
+  static $absolute_path_to_drupal = NULL;
+
+  if ($absolute_path_to_drupal === NULL) {
+  // Get the absolute path to this file:
+  $dir = rtrim(str_replace('\\', '/', dirname(__FILE__)), '/');
+  $parts = explode('/', $dir);
+
+  // Iterate up the directory hierarchy until we find the website root:
+  $done = FALSE;
+  do {
+    // Check a couple of obvious things:
+    $done = is_dir("$dir/sites") && is_dir("$dir/includes") && is_file("$dir/index.php");
+    if (!$done) {
+      // If there's no more path to examine, we didn't find the site root:
+      if (empty($parts)) {
+      $absolute_path_to_drupal = FALSE;
+      break;
+      }
+      // Go up one level and look again:
+      array_pop($parts);
+      $dir = implode('/', $parts);
+    }
+  } while (!$done);
+
+    $absolute_path_to_drupal = $dir;
+  }
+
+  return $absolute_path_to_drupal;
+}
+
+function webgl_viewer_node_submit($node, $form, &$form_state) {
+  
+  $file = file_save_upload('field_rti_uploader_und_0', array(
+    'file_validate_extensions' => array('zip tar tar.gz'),
+    )
+  );
+    
+  // Creating a streamwrapper URI.
+  $folderUri = "public://coin_rti";
+
+  // Created a directory if not available.
+  if (!is_dir(drupal_realpath($folderUri))) {
+    drupal_mkdir(drupal_realpath($folderUri), variable_get('file_chmod_directory', 0755));
+  }
+
+  if (isset($file)) {
+    if ($file = file_move($file, $folderUri, FILE_EXISTS_RENAME)) {
+
+      $form_state['values']['file'] = $file;
+      $realpath = drupal_realpath($file->uri);
+
+      $folde_dyna_name = '';
+
+      //file_put_contents($folderUri .'/node.txt', serialize($node->field_rti_uploader));
+      //file_put_contents($folderUri .'/form.txt', serialize($form));
+      //file_put_contents($folderUri .'/form_state.txt', serialize($form_state));
+
+      $zip = new ZipArchive();
+      $zip->open($realpath);
+      
+      $fid = $node->field_rti_uploader['und'][0]['fid'];
+      
+       // Created a directory if not available.
+      if (!is_dir(drupal_realpath($folderUri . '/rti_' . $fid))) {
+        drupal_mkdir(drupal_realpath($folderUri . '/rti_' . $fid), variable_get('file_chmod_directory', 0755));
+      }
+
+      //Logic for extract all files/folder from file
+      if($zip->numFiles <= 1){
+        $folderUriPath = drupal_realpath($folderUri . '/rti_' . $fid);
+      }
+
+      $result = @$zip->extractTo(drupal_realpath($folderUriPath));
+
+     
+      $result = FALSE;
+      for($i = 0; $i < $zip->numFiles; $i++) {
+          $filename = $zip->getNameIndex($i);
+          $fileinfo = pathinfo($filename);
+          $filePath = drupal_realpath($folderUri . '/rti_' . $fid . '/');
+
+          //Copy all files to newly created dunamic folder...
+         $result = copy("zip://".$realpath."#".$filename, $filePath . '/'.$fileinfo['basename']);
+         //file_put_contents($folderUri .'/files.txt', serialize($orgVal->field_rti_uploader['und'][0]));
+      } 
+
+      if ($result === TRUE) {
+       // drupal_set_message(t('All media have been extracted to %path', array('%path' => drupal_realpath($folderUri))));
+      }
+      else {
+        watchdog('error', 'There is some problem related to extraction of the file. Please upload and try again.', array(), WATCHDOG_ERROR, NULL);
+        drupal_set_message(t('There is some problem related to extraction of the file. Please upload and try again.'), 'error', FALSE);
+      }
+      $zip->close();
+    }
+    else {
+      form_set_error('file', t("Failed to write the uploaded file the file folder."));
+    }  
+  }
+  else {
+    form_set_error('file', t('No file was uploaded.'));
+  }
+}
+
+
+function webgl_viewer_node_update($node) {
+  $orgVal = $node->original;
+   // Creating a streamwrapper URI.
+  $folderUri = "public://coin_rti";
+
+
+
+  //Initialize variable for check case...
+  $flagRemoveOld = false;
+  $origUploaderVal = $orgVal->field_rti_uploader;
+  $newUploaderVal = $node->field_rti_uploader;
+
+  /*  Check which case...
+  *   1. Uploader with different then exist RTI folder...
+  *   2. Uploader with same RTI folder ...
+  */
+  if(isset($origUploaderVal['und'][0]) && isset($newUploaderVal['und'][0]) && ($origUploaderVal['und'][0]['fid'] != $newUploaderVal['und'][0]['fid'])){
+    $flagRemoveOld = true;
+  }
+
+  if($flagRemoveOld) {//If not from above case then remove folder for used in RTI...
+
+  ///}
+
+
+  //file_put_contents($folderUri .'/updatenode.txt', serialize($node->original));
+  //if(isset($orgVal->field_rti_uploader['und'])){
+    $tmpRemoveDir = 'rti_' . $orgVal->field_rti_uploader['und'][0]['fid'];
+    $removeDir = drupal_realpath($folderUri.'/'.$tmpRemoveDir);
+    
+    $files = glob($removeDir . '/*'); // get all file names
+    foreach($files as $file){ // iterate files
+     if(is_file($file))  unlink($file); // delete file
+    }
+    if(is_dir($removeDir)) drupal_rmdir($removeDir);
+    
+    $folderPath = str_replace(".zip", "", $removeDir);
+    if(is_dir($folderPath)) drupal_rmdir($folderPath);
+    //file_put_contents($folderUri .'/updatenode.txt', serialize($orgVal->field_rti_uploader['und'][0]));
+  }
+  // Provides the "updated" values
+  
+}
